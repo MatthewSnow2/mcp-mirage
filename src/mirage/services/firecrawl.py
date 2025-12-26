@@ -71,61 +71,10 @@ class FirecrawlService:
         Returns:
             Structured brand data
         """
-        # Use Firecrawl's extract endpoint with a schema for brand data
+        # Use Firecrawl's dedicated branding format
         payload = {
             "url": url,
-            "formats": ["extract"],
-            "extract": {
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "colors": {
-                            "type": "object",
-                            "properties": {
-                                "primary": {"type": "string", "description": "Primary brand color in hex"},
-                                "secondary": {"type": "string", "description": "Secondary brand color in hex"},
-                                "accent": {"type": "string", "description": "Accent color in hex"},
-                                "background": {"type": "string", "description": "Background color in hex"},
-                                "text": {"type": "string", "description": "Primary text color in hex"},
-                                "palette": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "All colors found on the page"
-                                }
-                            }
-                        },
-                        "typography": {
-                            "type": "object",
-                            "properties": {
-                                "headings": {"type": "string", "description": "Font family for headings"},
-                                "body": {"type": "string", "description": "Font family for body text"},
-                                "weights": {
-                                    "type": "array",
-                                    "items": {"type": "integer"},
-                                    "description": "Font weights used"
-                                }
-                            }
-                        },
-                        "buttons": {
-                            "type": "object",
-                            "properties": {
-                                "primary": {
-                                    "type": "object",
-                                    "properties": {
-                                        "bg": {"type": "string"},
-                                        "text": {"type": "string"},
-                                        "border_radius": {"type": "string"},
-                                        "padding": {"type": "string"}
-                                    }
-                                }
-                            }
-                        },
-                        "logo_url": {"type": "string", "description": "URL to the website logo"},
-                        "favicon_url": {"type": "string", "description": "URL to the favicon"}
-                    }
-                },
-                "prompt": "Extract the brand identity including colors, typography, and button styles from this website. For colors, provide hex values. For typography, identify the font families used for headings and body text."
-            }
+            "formats": ["branding"],
         }
 
         if include_screenshots:
@@ -135,43 +84,69 @@ class FirecrawlService:
         response.raise_for_status()
         data = response.json()
 
-        # Parse the extracted data
-        extracted = data.get("data", {}).get("extract", {})
+        # Parse the branding data from Firecrawl's dedicated endpoint
+        branding = data.get("data", {}).get("branding", {})
         screenshots = []
 
         if include_screenshots and "screenshot" in data.get("data", {}):
             screenshots.append(data["data"]["screenshot"])
 
-        # Build the brand data structure
-        colors_data = extracted.get("colors", {})
+        # Extract colors from branding response
+        colors_data = branding.get("colors", {})
         colors = BrandColors(
             primary=colors_data.get("primary", "#000000"),
             secondary=colors_data.get("secondary"),
             accent=colors_data.get("accent"),
             background=colors_data.get("background"),
-            text=colors_data.get("text"),
-            palette=colors_data.get("palette", []),
+            text=colors_data.get("textPrimary"),  # Note: Firecrawl uses "textPrimary"
+            palette=list(colors_data.values()) if colors_data else [],
         )
 
-        typo_data = extracted.get("typography", {})
+        # Extract typography from branding response
+        typo_data = branding.get("typography", {})
+        font_families = typo_data.get("fontFamilies", {})
+        font_weights = typo_data.get("fontWeights", {})
+        
         typography = BrandTypography(
-            headings=typo_data.get("headings", "sans-serif"),
-            body=typo_data.get("body", "sans-serif"),
-            weights=typo_data.get("weights", [400, 600, 700]),
+            headings=font_families.get("heading", font_families.get("primary", "sans-serif")),
+            body=font_families.get("primary", "sans-serif"),
+            weights=list(font_weights.values()) if font_weights else [400, 600, 700],
+            base_size=typo_data.get("fontSizes", {}).get("body", "16px"),
         )
 
-        spacing = BrandSpacing()
+        # Extract spacing from branding response
+        spacing_data = branding.get("spacing", {})
+        spacing = BrandSpacing(
+            grid=f"{spacing_data.get('baseUnit', 8)}px",
+        )
+        if spacing_data.get("borderRadius"):
+            spacing.gap = spacing_data.get("borderRadius")
 
-        buttons_data = extracted.get("buttons", {})
+        # Extract button styles from branding response
+        components = branding.get("components", {})
         buttons = BrandButtons()
-        if buttons_data.get("primary"):
-            btn = buttons_data["primary"]
+        
+        if components.get("buttonPrimary"):
+            btn = components["buttonPrimary"]
             buttons.primary = ButtonStyle(
-                bg=btn.get("bg", colors.primary),
-                text=btn.get("text", "#ffffff"),
-                border_radius=btn.get("border_radius", "4px"),
-                padding=btn.get("padding", "12px 24px"),
+                bg=btn.get("background", colors.primary),
+                text=btn.get("textColor", "#ffffff"),
+                border_radius=btn.get("borderRadius", "4px"),
+                padding="12px 24px",  # Firecrawl doesn't always return padding
             )
+        
+        if components.get("buttonSecondary"):
+            btn = components["buttonSecondary"]
+            buttons.secondary = ButtonStyle(
+                bg=btn.get("background", "transparent"),
+                text=btn.get("textColor", colors.primary),
+                border_radius=btn.get("borderRadius", "4px"),
+                padding="12px 24px",
+                border=btn.get("borderColor"),
+            )
+
+        # Extract images/logos
+        images = branding.get("images", {})
 
         return BrandData(
             url=url,
@@ -179,8 +154,8 @@ class FirecrawlService:
             typography=typography,
             spacing=spacing,
             buttons=buttons,
-            logo_url=extracted.get("logo_url"),
-            favicon_url=extracted.get("favicon_url"),
+            logo_url=images.get("logo") or branding.get("logo"),
+            favicon_url=images.get("favicon"),
             screenshots=screenshots,
         )
 
