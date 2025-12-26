@@ -98,3 +98,144 @@ class TestBrandDataSchema:
             "typography": {"headings": "Arial", "body": "Helvetica"},
         })
         assert brand.url == "https://example.com"
+
+
+class TestVisionService:
+    """Tests for VisionService."""
+
+    def test_requires_api_key(self):
+        """Test that service requires API key."""
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY is required"):
+                from mirage.services.vision import VisionService
+                VisionService()
+
+    def test_accepts_api_key_parameter(self):
+        """Test that API key can be passed as parameter."""
+        with patch("anthropic.AsyncAnthropic"):
+            from mirage.services.vision import VisionService
+
+            service = VisionService(api_key="test-key")
+            assert service.api_key == "test-key"
+
+    def test_build_extraction_prompt(self):
+        """Test that extraction prompt is well-formed."""
+        with patch("anthropic.AsyncAnthropic"):
+            from mirage.services.vision import VisionService
+
+            service = VisionService(api_key="test-key")
+            prompt = service._build_extraction_prompt()
+
+            assert "colors" in prompt
+            assert "typography" in prompt
+            assert "buttons" in prompt
+            assert "JSON" in prompt
+            assert "HEXCODE" in prompt
+
+    def test_parse_response_valid_json(self):
+        """Test parsing valid JSON response."""
+        with patch("anthropic.AsyncAnthropic"):
+            from mirage.services.vision import VisionService
+
+            service = VisionService(api_key="test-key")
+
+            response = '''
+            {
+                "colors": {
+                    "primary": "#FF5A5F",
+                    "secondary": "#00A699",
+                    "background": "#FFFFFF",
+                    "text": "#484848"
+                },
+                "typography": {
+                    "headings": "Circular",
+                    "body": "Circular"
+                },
+                "buttons": {
+                    "primary": {
+                        "bg": "#FF5A5F",
+                        "text": "#FFFFFF",
+                        "border_radius": "8px"
+                    }
+                }
+            }
+            '''
+
+            result = service._parse_response(
+                response,
+                "https://example.com",
+                "https://screenshot.url/img.png"
+            )
+
+            assert result.colors.primary == "#FF5A5F"
+            assert result.colors.secondary == "#00A699"
+            assert result.typography.headings == "Circular"
+            assert result.buttons.primary.bg == "#FF5A5F"
+            assert result.url == "https://example.com"
+            assert "https://screenshot.url/img.png" in result.screenshots
+
+    def test_parse_response_with_markdown_code_block(self):
+        """Test parsing response wrapped in markdown code blocks."""
+        with patch("anthropic.AsyncAnthropic"):
+            from mirage.services.vision import VisionService
+
+            service = VisionService(api_key="test-key")
+
+            response = '''```json
+{
+    "colors": {
+        "primary": "#FF90E8",
+        "background": "#FFFFFF",
+        "text": "#000000"
+    },
+    "typography": {
+        "headings": "Mabry",
+        "body": "Mabry"
+    },
+    "buttons": {}
+}
+```'''
+
+            result = service._parse_response(
+                response,
+                "https://gumroad.com",
+                "https://screenshot.url/img.png"
+            )
+
+            assert result.colors.primary == "#FF90E8"
+            assert result.typography.headings == "Mabry"
+
+    def test_parse_response_invalid_json_returns_defaults(self):
+        """Test that invalid JSON returns default brand data."""
+        with patch("anthropic.AsyncAnthropic"):
+            from mirage.services.vision import VisionService
+
+            service = VisionService(api_key="test-key")
+
+            result = service._parse_response(
+                "not valid json at all",
+                "https://example.com",
+                "https://screenshot.url/img.png"
+            )
+
+            assert result.colors.primary == "#000000"
+            assert result.url == "https://example.com"
+            assert result.typography.headings == "sans-serif"
+
+    def test_default_brand_data(self):
+        """Test default brand data factory."""
+        with patch("anthropic.AsyncAnthropic"):
+            from mirage.services.vision import VisionService
+
+            service = VisionService(api_key="test-key")
+
+            result = service._default_brand_data(
+                "https://example.com",
+                "https://screenshot.url/img.png"
+            )
+
+            assert result.url == "https://example.com"
+            assert result.colors.primary == "#000000"
+            assert result.typography.headings == "sans-serif"
+            assert result.typography.body == "sans-serif"
+            assert "https://screenshot.url/img.png" in result.screenshots

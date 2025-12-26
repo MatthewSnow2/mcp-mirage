@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from .schemas.brand import BrandData, GeneratedCode, BrandComparison, ComparisonMetrics
 from .services.firecrawl import FirecrawlService
 from .services.gemini import GeminiService
+from .services.vision import VisionService
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -183,4 +184,77 @@ def register_tools(mcp: FastMCP) -> None:
             "preview_url": result.preview_url,
             "template_type": template_type,
             "source_url": url,
+        }
+
+    @mcp.tool()
+    async def extract_brand_visual(url: str) -> dict:
+        """Extract brand identity using visual analysis (Claude Vision).
+
+        More accurate and deterministic than text-based extraction, but slower
+        and more expensive. Uses screenshot analysis to extract exact colors.
+
+        Args:
+            url: Target website URL to extract brand from
+
+        Returns:
+            Brand data including colors, typography, and button styles
+        """
+        firecrawl = FirecrawlService()
+        vision = VisionService()
+        try:
+            # Get screenshot via Firecrawl
+            scrape_result = await firecrawl.scrape(url, include_screenshot=True)
+            screenshot_url = scrape_result.get("data", {}).get("screenshot")
+
+            if not screenshot_url:
+                raise ValueError("Failed to capture screenshot")
+
+            # Analyze with Claude Vision
+            brand_data = await vision.analyze_brand(screenshot_url, url)
+            return brand_data.model_dump()
+        finally:
+            await firecrawl.close()
+            await vision.close()
+
+    @mcp.tool()
+    async def replicate_website_visual(
+        url: str,
+        component_type: str = "landing_page",
+        customization: str = "",
+    ) -> dict:
+        """Complete workflow using visual analysis: extract brand + generate replica.
+
+        Uses Claude Vision for accurate brand extraction, then generates matching
+        HTML/CSS components. More accurate than replicate_website but slower.
+
+        Args:
+            url: Target website URL
+            component_type: What to generate - one of: landing_page, email, button, card
+            customization: Additional instructions for generation
+
+        Returns:
+            Both brand_data and generated HTML/CSS
+        """
+        firecrawl = FirecrawlService()
+        vision = VisionService()
+        try:
+            # Get screenshot via Firecrawl
+            scrape_result = await firecrawl.scrape(url, include_screenshot=True)
+            screenshot_url = scrape_result.get("data", {}).get("screenshot")
+
+            if not screenshot_url:
+                raise ValueError("Failed to capture screenshot")
+
+            # Analyze with Claude Vision
+            brand_data = await vision.analyze_brand(screenshot_url, url)
+        finally:
+            await firecrawl.close()
+            await vision.close()
+
+        gemini = GeminiService()
+        generated = await gemini.generate_replica(brand_data, component_type, customization)
+
+        return {
+            "brand_data": brand_data.model_dump(),
+            "generated": generated.model_dump(),
         }

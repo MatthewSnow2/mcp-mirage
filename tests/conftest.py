@@ -78,3 +78,12 @@ def mock_gemini_service(sample_generated_code):
     mock.generate_from_template = AsyncMock(return_value=sample_generated_code)
     mock.calculate_color_similarity = AsyncMock(return_value=0.85)
     return mock
+
+
+@pytest.fixture
+def mock_vision_service(sample_brand_data):
+    """Create a mock VisionService."""
+    mock = MagicMock()
+    mock.analyze_brand = AsyncMock(return_value=sample_brand_data)
+    mock.close = AsyncMock()
+    return mock
